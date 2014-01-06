@@ -207,6 +207,8 @@ struct mips_option {
 	const char *desc;
 };
 
+FILE * global_variables; //yufei
+
 static void add_dumpop(struct readelf *re, size_t si, const char *sn, int op,
     int t);
 static const char *aeabi_adv_simd_arch(uint64_t simd);
@@ -4487,6 +4489,36 @@ dump_dwarf_line_decoded(struct readelf *re)
 	}
 }
 
+//yufe.begin
+void get_type_name(struct readelf *re, Dwarf_Off die_off,  const char **s){
+    Dwarf_Die type_die; 
+    const char *tag_str;
+	Dwarf_Error de;
+    Dwarf_Half tag;
+
+    if(dwarf_offdie(re->dbg, die_off, &type_die, &de) != DW_DLV_OK){
+        fprintf(global_variables, "dwarf_formudata failed: %s",
+                dwarf_errmsg(de));
+    }else{
+        dwarf_tag(type_die, &tag, &de);
+        dwarf_get_TAG_name(tag, &tag_str);
+        //TODO recursively get the type, like if tag
+        //is DW_TAG_const_type, then go deeper to get
+        //type.
+        if(tag == DW_TAG_const_type){
+            //get next die off 
+            
+        }
+            
+
+        //TODO get type name
+        //if(tag == DW_TAG_structure_type)
+        if(tag != DW_TAG_base_type && tag != DW_TAG_variable)
+            *s = tag_str;
+    }    
+}
+//yufei.end
+
 static void
 dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 {
@@ -4505,6 +4537,8 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 	char *v_str;
 	uint8_t *b;
 	int i, j, abc, ret;
+    int is_dw_at_location = 0; //yufei
+    int is_dw_tag_variable = 0; //yufei
 
 	if (dwarf_dieoffset(die, &dieoff, &de) != DW_DLV_OK) {
 		warnx("dwarf_dieoffset failed: %s", dwarf_errmsg(de));
@@ -4524,6 +4558,10 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 		warnx("dwarf_tag failed: %s", dwarf_errmsg(de));
 		goto cont_search;
 	}
+
+    if( tag == DW_TAG_variable) //yufei
+        is_dw_tag_variable = 1;
+
 	if (dwarf_get_TAG_name(tag, &tag_str) != DW_DLV_OK) {
 		warnx("dwarf_get_TAG_name failed");
 		goto cont_search;
@@ -4539,6 +4577,8 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 	}
 
 	for (i = 0; i < attr_count; i++) {
+        is_dw_at_location = 0; //yufei
+
 		if (dwarf_whatform(attr_list[i], &form, &de) != DW_DLV_OK) {
 			warnx("dwarf_whatform failed: %s", dwarf_errmsg(de));
 			continue;
@@ -4547,6 +4587,13 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 			warnx("dwarf_whatattr failed: %s", dwarf_errmsg(de));
 			continue;
 		}
+
+        if(attr == DW_AT_location) //yufei
+            is_dw_at_location = 1;
+        int is_dw_at_type = 0;
+        if(attr == DW_AT_type)
+            is_dw_at_type = 1;
+
 		if (dwarf_get_AT_name(attr, &attr_str) != DW_DLV_OK) {
 			warnx("dwarf_get_AT_name failed");
 			continue;
@@ -4576,6 +4623,9 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 			}
 			v_off += cuoff;
 			printf("<%jx>", (uintmax_t) v_off);
+
+
+
 			break;
 
 		case DW_FORM_addr:
@@ -4650,6 +4700,20 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 			b = v_block->bl_data;
 			for (j = 0; (Dwarf_Unsigned) j < v_block->bl_len; j++)
 				printf(" %x", b[j]);
+
+            //yufei.begin
+            if(v_block->bl_len == 5) { //yufei
+                unsigned int v_address = *((unsigned int *)(b+1));
+                if(v_address >= 0xC0000000 && is_dw_at_location && is_dw_tag_variable){ 
+                    const char * type_name = NULL;
+                    get_type_name(re, v_off, &type_name);
+                    if(type_name != NULL)
+                        fprintf(global_variables, "%x <%jx> %s %s \n", 
+                                v_address, (uintmax_t) v_off, type_name, v_str);
+                }
+            }
+            //yufei.end
+            
 			break;
 		}
 		switch (attr) {
@@ -6219,30 +6283,35 @@ dump_dwarf(struct readelf *re)
 		return;
 	}
 
-	if (re->dop & DW_A)
-		dump_dwarf_abbrev(re);
-	if (re->dop & DW_L)
-		dump_dwarf_line(re);
-	if (re->dop & DW_LL)
-		dump_dwarf_line_decoded(re);
+    printf("re->dop 0x%x\n", re->dop);//yufei, re->dop is 0xfad
+
+    //commented by yufei
+	/* if (re->dop & DW_A) */
+	/* 	dump_dwarf_abbrev(re); */
+	/* if (re->dop & DW_L) */
+	/* 	dump_dwarf_line(re); */
+	/* if (re->dop & DW_LL) */
+	/* 	dump_dwarf_line_decoded(re); */
 	if (re->dop & DW_I)
 		dump_dwarf_info(re);
-	if (re->dop & DW_P)
-		dump_dwarf_pubnames(re);
-	if (re->dop & DW_R)
-		dump_dwarf_aranges(re);
-	if (re->dop & DW_RR)
-		dump_dwarf_ranges(re);
-	if (re->dop & DW_M)
-		dump_dwarf_macinfo(re);
-	if (re->dop & DW_F)
-		dump_dwarf_frame(re, 0);
-	else if (re->dop & DW_FF)
-		dump_dwarf_frame(re, 1);
-	if (re->dop & DW_S)
-		dump_dwarf_str(re);
-	if (re->dop & DW_O)
-		dump_dwarf_loclist(re);
+
+    //commented by yufei
+	/* if (re->dop & DW_P) */
+	/* 	dump_dwarf_pubnames(re); */
+	/* if (re->dop & DW_R) */
+	/* 	dump_dwarf_aranges(re); */
+	/* if (re->dop & DW_RR) */
+	/* 	dump_dwarf_ranges(re); */
+	/* if (re->dop & DW_M) */
+	/* 	dump_dwarf_macinfo(re); */
+	/* if (re->dop & DW_F) */
+	/* 	dump_dwarf_frame(re, 0); */
+	/* else if (re->dop & DW_FF) */
+	/* 	dump_dwarf_frame(re, 1); */
+	/* if (re->dop & DW_S) */
+	/* 	dump_dwarf_str(re); */
+	/* if (re->dop & DW_O) */
+	/* 	dump_dwarf_loclist(re); */
 
 	dwarf_finish(re->dbg, &de);
 }
@@ -6685,6 +6754,8 @@ readelf_usage(void)
 	exit(EXIT_FAILURE);
 }
 
+
+
 int
 main(int argc, char **argv)
 {
@@ -6692,6 +6763,9 @@ main(int argc, char **argv)
 	unsigned long	 si;
 	int		 opt, i;
 	char		*ep;
+
+    global_variables = fopen("global_variables", "w");//yufei
+    fprintf(global_variables, "%s\n", "Global variables: ");
 
 	re = &re_storage;
 	memset(re, 0, sizeof(*re));
