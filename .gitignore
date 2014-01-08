@@ -17,7 +17,6 @@
 /elfcopy/strip
 /elfdump/elfdump
 /findtextrel/findtextrel
-/readelf/global_variables
 /readelf/readelf
 /size/size
 /strings/strings

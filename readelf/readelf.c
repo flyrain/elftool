@@ -4490,32 +4490,136 @@ dump_dwarf_line_decoded(struct readelf *re)
 }
 
 //yufe.begin
-void get_type_name(struct readelf *re, Dwarf_Off die_off,  const char **s){
-    Dwarf_Die type_die; 
+void get_type_name(struct readelf *re, Dwarf_Off die_off,  char **s){
+    Dwarf_Die die; 
     const char *tag_str;
 	Dwarf_Error de;
     Dwarf_Half tag;
+    Dwarf_Off cuoff, culen;
 
-    if(dwarf_offdie(re->dbg, die_off, &type_die, &de) != DW_DLV_OK){
+    if(dwarf_offdie(re->dbg, die_off, &die, &de) != DW_DLV_OK){
         fprintf(global_variables, "dwarf_formudata failed: %s",
                 dwarf_errmsg(de));
-    }else{
-        dwarf_tag(type_die, &tag, &de);
-        dwarf_get_TAG_name(tag, &tag_str);
-        //TODO recursively get the type, like if tag
-        //is DW_TAG_const_type, then go deeper to get
-        //type.
-        if(tag == DW_TAG_const_type){
-            //get next die off 
-            
-        }
-            
+        return;
+    }
 
-        //TODO get type name
-        //if(tag == DW_TAG_structure_type)
-        if(tag != DW_TAG_base_type && tag != DW_TAG_variable)
-            *s = tag_str;
-    }    
+    if (dwarf_die_CU_offset_range(die, &cuoff, &culen, &de) != DW_DLV_OK) {
+        warnx("dwarf_die_CU_offset_range failed: %s",
+              dwarf_errmsg(de));
+        cuoff = 0;
+    }
+
+    dwarf_tag(die, &tag, &de);
+
+    //Recursively get the type, like if tag
+    //is DW_TAG_const_type or DW_TAG_array_type, then go deeper to get the real type
+    if(tag == DW_TAG_const_type 
+       || tag == DW_TAG_array_type 
+       || tag == DW_TAG_pointer_type
+       || tag == DW_TAG_typedef){
+        //get next die off 
+        Dwarf_Attribute *attr_list;
+        Dwarf_Signed attr_count;
+        Dwarf_Half attr, form;
+        Dwarf_Off v_off;
+        int i, ret;
+        if ((ret = dwarf_attrlist(die, &attr_list, &attr_count, &de)) !=
+            DW_DLV_OK) {
+            if (ret == DW_DLV_ERROR)
+                warnx("dwarf_attrlist failed: %s", dwarf_errmsg(de));
+        }
+
+        for (i = 0; i < attr_count; i++) {
+            if (dwarf_whatform(attr_list[i], &form, &de) != DW_DLV_OK) {
+                warnx("dwarf_whatform failed: %s", dwarf_errmsg(de));
+                continue;
+            }
+            if (dwarf_whatattr(attr_list[i], &attr, &de) != DW_DLV_OK) {
+                warnx("dwarf_whatattr failed: %s", dwarf_errmsg(de));
+                continue;
+            }
+
+            //find the DW_AT_type attribution
+            if(attr != DW_AT_type)
+                continue;
+                
+            switch (form) {
+            case DW_FORM_ref1:
+            case DW_FORM_ref2:
+            case DW_FORM_ref4:
+            case DW_FORM_ref8:
+            case DW_FORM_ref_udata:
+                if (dwarf_formref(attr_list[i], &v_off, &de) !=
+                    DW_DLV_OK) {
+                    warnx("dwarf_formref failed: %s",
+                          dwarf_errmsg(de));
+                    continue;
+                }
+                    
+                v_off += cuoff;
+                //fprintf(global_variables, "<%jx>", (uintmax_t) v_off);
+                break;
+            }
+                
+            char * type_name = NULL;
+            get_type_name(re, v_off, &type_name);
+            if(type_name != NULL)
+                *s = type_name;
+        }
+
+    }else if (tag != DW_TAG_base_type 
+              && tag != DW_TAG_variable 
+              && tag != DW_TAG_subroutine_type
+              && tag != DW_TAG_enumeration_type ){
+        //this place is the end of recursive procedure
+        //get type name
+        Dwarf_Attribute *attr_list;
+        Dwarf_Signed attr_count;
+        Dwarf_Half attr, form;
+        Dwarf_Off v_off;
+        int i, ret;
+        char *v_str = NULL;
+        if ((ret = dwarf_attrlist(die, &attr_list, &attr_count, &de)) !=
+            DW_DLV_OK) {
+            if (ret == DW_DLV_ERROR)
+                warnx("dwarf_attrlist failed: %s", dwarf_errmsg(de));
+        }
+
+        for (i = 0; i < attr_count; i++) {
+            if (dwarf_whatform(attr_list[i], &form, &de) != DW_DLV_OK) {
+                warnx("dwarf_whatform failed: %s", dwarf_errmsg(de));
+                continue;
+            }
+            if (dwarf_whatattr(attr_list[i], &attr, &de) != DW_DLV_OK) {
+                warnx("dwarf_whatattr failed: %s", dwarf_errmsg(de));
+                continue;
+            }
+
+            //find the DW_AT_name attribution
+            if(attr != DW_AT_name)
+                continue;
+                
+            switch (form) {
+            case DW_FORM_string:
+            case DW_FORM_strp:
+                if (dwarf_formstring(attr_list[i], &v_str, &de) !=
+                    DW_DLV_OK) {
+                    warnx("dwarf_formstring failed: %s",
+                          dwarf_errmsg(de));
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if(v_str != NULL 
+           && strcmp(v_str, "kernel_symbol") != 0
+           && strcmp(v_str, "obs_kernel_param") != 0 
+           && strcmp(v_str, "tracepoint") != 0 
+           && strcmp(v_str, "file_operations") != 0 
+            )
+            *s = v_str;
+    }
 }
 //yufei.end
 
@@ -4534,7 +4638,7 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
 	Dwarf_Bool v_bool;
 	Dwarf_Error de;
 	const char *tag_str, *attr_str, *ate_str;
-	char *v_str;
+ 	char *v_str;
 	uint8_t *b;
 	int i, j, abc, ret;
     int is_dw_at_location = 0; //yufei
@@ -4705,11 +4809,11 @@ dump_dwarf_die(struct readelf *re, Dwarf_Die die, int level)
             if(v_block->bl_len == 5) { //yufei
                 unsigned int v_address = *((unsigned int *)(b+1));
                 if(v_address >= 0xC0000000 && is_dw_at_location && is_dw_tag_variable){ 
-                    const char * type_name = NULL;
+                    char * type_name = NULL;
                     get_type_name(re, v_off, &type_name);
                     if(type_name != NULL)
-                        fprintf(global_variables, "%x <%jx> %s %s \n", 
-                                v_address, (uintmax_t) v_off, type_name, v_str);
+                        fprintf(global_variables, "%x %s %s \n", 
+                                v_address, type_name, v_str);
                 }
             }
             //yufei.end
